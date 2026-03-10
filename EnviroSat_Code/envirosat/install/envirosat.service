@@ -1,0 +1,56 @@
+# ============================================================
+# EnviroSat — install/envirosat.service
+# systemd unit file for automatic startup on boot.
+#
+# Install:
+#   sudo cp install/envirosat.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable envirosat.service
+#   sudo systemctl start envirosat.service
+#
+# Useful commands:
+#   sudo systemctl status envirosat     — view current state
+#   sudo systemctl stop envirosat       — stop the service
+#   sudo systemctl restart envirosat    — restart after a code change
+#   journalctl -u envirosat -f          — follow live log output
+#   journalctl -u envirosat --since today — view today's log
+# ============================================================
+
+[Unit]
+Description=EnviroSat Nano-Satellite Main Service
+Documentation=https://github.com/envirosat/envirosat-platform
+# Start after network is available (HaLow needs the network stack up)
+After=network.target
+# If the UPS HAT is monitored over I2C, ensure I2C is ready
+After=sys-subsystem-platform-drivers-loaded.target
+
+[Service]
+Type=simple
+User=envirosat
+Group=envirosat
+
+# Working directory — all relative paths in scripts resolve from here
+WorkingDirectory=/home/envirosat/envirosat
+
+# Use the pimoroni virtualenv Python which has all sensor libraries
+ExecStart=/home/envirosat/.virtualenvs/pimoroni/bin/python main.py
+
+# Restart on failure with a 10-second delay
+# This handles transient hardware errors on boot without spinning
+Restart=on-failure
+RestartSec=10
+
+# Give scripts time to flush data and shut down cleanly
+TimeoutStopSec=30
+
+# Log stdout and stderr to the systemd journal
+StandardOutput=journal
+StandardError=journal
+
+# Environment — suppress some common Pi hardware warnings
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+[Install]
+# Start automatically when the system reaches normal multi-user mode
+WantedBy=multi-user.target
