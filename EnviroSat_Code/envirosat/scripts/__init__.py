@@ -1,1 +1,0 @@
-# EnviroSat scripts package
