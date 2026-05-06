@@ -40,6 +40,19 @@ info "Installing EnviroSat dependencies for user: ${ENVIROSAT_USER}"
 info "Project directory: ${PROJECT_DIR}"
 echo ""
 
+# ── 0. Clone the repository (if not already present) ─────────────────
+GITHUB_REPO="https://github.com/bruceboge/EnviroSat.git"
+
+info "Step 0/8 — Checking repository …"
+if [ -d "${PROJECT_DIR}/.git" ]; then
+    info "  Repository already present at ${PROJECT_DIR} — pulling latest changes."
+    git -C "${PROJECT_DIR}" pull
+else
+    info "  Cloning from ${GITHUB_REPO} …"
+    git clone "${GITHUB_REPO}" "${PROJECT_DIR}"
+fi
+success "Repository ready at ${PROJECT_DIR}."
+
 # ── 1. System update ─────────────────────────────────────────────────
 info "Step 1/8 — Updating system packages …"
 sudo apt update -y && sudo apt upgrade -y

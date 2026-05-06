@@ -17,35 +17,55 @@ import threading
 import signal
 import sys
 import logging
+import logging.handlers
 from datetime import datetime, timezone
 
 # ── Local modules ────────────────────────────────────────────────────
-from scripts.sensors      import SensorReader
-from scripts.gps          import GPSReader
-from scripts.imu          import IMUReader
-from scripts.camera       import CameraController
-from scripts.nrf_tx       import NRFTransmitter
+from scripts.sensors       import SensorReader
+from scripts.gps           import GPSReader
+from scripts.imu           import IMUReader
+from scripts.camera        import CameraController
+from scripts.nrf_tx        import NRFTransmitter
+from scripts.halow_tx      import HALowTransmitter
 from scripts.power_monitor import PowerMonitor
 from scripts.logger        import DataLogger
+from config import (
+    SATELLITE_ID, COLLECTION_INTERVAL, CAMERA_INTERVAL,
+    IMAGE_DIR, LOG_DIR, GPS_PORT, GPS_BAUD,
+    LOG_MAX_BYTES, LOG_BACKUP_COUNT,
+)
 
 # ── Logging setup ────────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  [%(levelname)s]  %(name)s — %(message)s",
+_formatter = logging.Formatter(
+    fmt="%(asctime)s  [%(levelname)s]  %(name)s — %(message)s",
     datefmt="%Y-%m-%dT%H:%M:%S",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("/home/envirosat/envirosat/logs/system.log"),
-    ],
 )
+_stream_handler = logging.StreamHandler(sys.stdout)
+_stream_handler.setFormatter(_formatter)
+# RotatingFileHandler prevents the log from filling the microSD card.
+_file_handler = logging.handlers.RotatingFileHandler(
+    filename=f"{LOG_DIR}/system.log",
+    maxBytes=LOG_MAX_BYTES,
+    backupCount=LOG_BACKUP_COUNT,
+)
+_file_handler.setFormatter(_formatter)
+logging.root.setLevel(logging.INFO)
+logging.root.addHandler(_stream_handler)
+logging.root.addHandler(_file_handler)
 log = logging.getLogger("main")
 
-# ── Configuration ────────────────────────────────────────────────────
-SATELLITE_ID      = "ES-01"
-COLLECTION_INTERVAL = 60        # seconds between sensor reads
-CAMERA_INTERVAL     = 300       # seconds between automatic captures
-IMAGE_DIR           = "/home/envirosat/envirosat/images"
-LOG_DIR             = "/home/envirosat/envirosat/logs"
+# ── Configuration — imported from config.py ──────────────────────────
+# SATELLITE_ID, COLLECTION_INTERVAL, CAMERA_INTERVAL, IMAGE_DIR,
+# LOG_DIR, GPS_PORT, GPS_BAUD are imported at the top of this file.
+
+# ── NRF command codes (must match ground_station.py) ─────────────────
+CMD_PING     = b'\x01'
+CMD_FAST     = b'\x02'   # Switch to 10-second collection interval
+CMD_SLOW     = b'\x03'   # Return to 60-second collection interval
+CMD_CAPTURE  = b'\x04'   # Trigger a camera capture immediately
+CMD_CAMERA_B = b'\x05'   # Switch to Camera B
+CMD_SHUTDOWN = b'\x06'   # Safe shutdown
+CMD_STATUS   = b'\x07'   # Log a status report
 
 # ── Global shutdown flag ─────────────────────────────────────────────
 shutdown_event = threading.Event()
@@ -128,7 +148,7 @@ def main():
     sensors = SensorReader()
 
     log.info("Initialising GPS reader …")
-    gps = GPSReader(port="/dev/serial0", baud=9600)
+    gps = GPSReader(port=GPS_PORT, baud=GPS_BAUD)
     gps_thread = threading.Thread(target=gps.run, args=(shutdown_event,), daemon=True)
     gps_thread.start()
 
@@ -145,6 +165,9 @@ def main():
     log.info("Initialising NRF24L01 transmitter …")
     nrf = NRFTransmitter()
 
+    log.info("Initialising HaLow transmitter …")
+    halow = HALowTransmitter()
+
     log.info("Initialising power monitor …")
     power = PowerMonitor(shutdown_event)
     power_thread = threading.Thread(target=power.run, daemon=True)
@@ -152,6 +175,9 @@ def main():
 
     log.info("Initialising data logger …")
     logger = DataLogger(LOG_DIR)
+
+    # ── Mutable collection interval (commands can change this) ───────
+    collection_interval = [COLLECTION_INTERVAL]   # list so inner functions can mutate
 
     log.info("All subsystems up — entering main collection loop.")
 
@@ -188,22 +214,58 @@ def main():
         except Exception as exc:
             log.error(f"Logger write failed: {exc}")
 
-        # 7. Transmit over NRF24L01 (short-range bench link)
+        # 7. Transmit compact record over NRF24L01 (short-range link)
         try:
             nrf.transmit(record)
         except Exception as exc:
             log.warning(f"NRF24 transmit failed: {exc}")
 
-        # 8. Log cycle time and sleep for the remainder of the interval
+        # 8. Transmit full record over HaLow (long-range link, no payload limit)
+        try:
+            halow.transmit(record)
+        except Exception as exc:
+            log.warning(f"HaLow transmit failed: {exc}")
+
+        # 9. Listen briefly for ground-station commands over NRF
+        cmd = nrf.listen_for_command(timeout_ms=500)
+        if cmd == CMD_PING:
+            log.info("Ground command: PING received.")
+        elif cmd == CMD_FAST:
+            collection_interval[0] = 10
+            log.info("Ground command: FAST mode — collecting every 10 s.")
+        elif cmd == CMD_SLOW:
+            collection_interval[0] = COLLECTION_INTERVAL
+            log.info(f"Ground command: SLOW mode — collecting every {COLLECTION_INTERVAL} s.")
+        elif cmd == CMD_CAPTURE:
+            log.info("Ground command: CAPTURE — triggering camera.")
+            try:
+                camera.capture(IMAGE_DIR)
+            except Exception as exc:
+                log.warning(f"Command-triggered capture failed: {exc}")
+        elif cmd == CMD_CAMERA_B:
+            log.info("Ground command: CAMERA B — switching camera.")
+            camera.switch_camera()
+        elif cmd == CMD_SHUTDOWN:
+            log.warning("Ground command: SHUTDOWN received.")
+            shutdown_event.set()
+        elif cmd == CMD_STATUS:
+            log.info(
+                f"STATUS — cycle={cycle} battery={battery_v}V "
+                f"gps_fix={gps_data.get('fix')} interval={collection_interval[0]}s"
+            )
+
+        # 10. Log cycle time and sleep for the remainder of the interval
         elapsed = time.monotonic() - cycle_start
         log.info(f"Cycle {cycle} complete in {elapsed:.2f}s  |  battery={battery_v}V")
-        sleep_for = max(0, COLLECTION_INTERVAL - elapsed)
+        sleep_for = max(0, collection_interval[0] - elapsed)
         shutdown_event.wait(sleep_for)
 
     # ── Clean shutdown ───────────────────────────────────────────────
     log.info("Shutdown…")
     logger.close()
     nrf.close()
+    halow.close()
+    gps.close()
     log.info("EnviroSat stopped.")
 
 

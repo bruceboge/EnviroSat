@@ -29,21 +29,19 @@ Licence: MIT
 
 import logging
 import json
-import struct
 import time
 
 log = logging.getLogger("nrf_tx")
 
-# ── NRF24L01 configuration ───────────────────────────────────────────
-CE_PIN   = 24           # GPIO 24 — see conflict-resolution note above
-CSN_PIN  = 8            # GPIO 8 (SPI CE0)
-SPI_BUS  = 0
-SPI_DEV  = 0
-CHANNEL  = 76           # RF channel 0–125. Must match ground station.
-DATA_RATE = 2           # 2 Mbps
-PA_LEVEL  = 0           # 0=min, 1=low, 2=high, 3=max transmit power
-
-TX_ADDRESS = b'\xE7\xE7\xE7\xE7\xE7'   # 5-byte pipe address
+# ── NRF24L01 configuration ──────────────────────────────────────────────────
+from config import (
+    NRF_CE_PIN  as CE_PIN,
+    NRF_CSN_PIN as CSN_PIN,
+    NRF_CHANNEL as CHANNEL,
+    NRF_DATA_RATE as DATA_RATE,
+    NRF_PA_LEVEL  as PA_LEVEL,
+    NRF_ADDRESS   as TX_ADDRESS,
+)
 MAX_PAYLOAD = 32                         # NRF24L01 hardware limit
 
 # ── Compact packet fields ────────────────────────────────────────────
@@ -144,6 +142,47 @@ class NRFTransmitter:
         except Exception as exc:
             log.warning(f"NRF24 transmit error: {exc}")
             return False
+
+    def listen_for_command(self, timeout_ms: int = 500) -> bytes:
+        """
+        Briefly switch to RX mode and return a command byte if one arrives.
+
+        The NRF24L01 is half-duplex. This method:
+          1. Opens a reading pipe on the same address the ground station writes to
+          2. Listens for up to timeout_ms milliseconds
+          3. Returns the command bytes if received, or None if nothing arrives
+          4. Always switches back to TX mode before returning
+
+        Timing: called once per main-loop cycle, so ground commands are
+        processed within one collection interval (default 60 s).
+        """
+        if self._radio is None:
+            return None
+        try:
+            self._radio.openReadingPipe(1, TX_ADDRESS)
+            self._radio.startListening()
+
+            deadline = time.monotonic() + (timeout_ms / 1000.0)
+            while time.monotonic() < deadline:
+                if self._radio.available():
+                    cmd = bytes(self._radio.read(1))
+                    self._radio.stopListening()
+                    self._radio.openWritingPipe(TX_ADDRESS)
+                    log.debug(f"Command received from ground: {cmd!r}")
+                    return cmd
+                time.sleep(0.01)
+
+            self._radio.stopListening()
+            self._radio.openWritingPipe(TX_ADDRESS)
+            return None
+        except Exception as exc:
+            log.warning(f"Command listener error: {exc}")
+            try:
+                self._radio.stopListening()
+                self._radio.openWritingPipe(TX_ADDRESS)
+            except Exception:
+                pass
+            return None
 
     def close(self):
         """Power down the radio."""

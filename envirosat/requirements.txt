@@ -1,0 +1,10 @@
+# EnviroSat — Python dependencies
+# Install with: pip3 install -r requirements.txt
+# (The Pimoroni Enviro+ library must be installed separately via install.sh)
+
+smbus2>=0.4.2          # I2C communication for IMU, camera mux, power monitor
+RPi.GPIO>=0.7.1        # GPIO pin control (NRF24 CE pin)
+pyrf24>=1.0.0          # NRF24L01+ radio driver
+pyserial>=3.5          # UART for GPS and HaLow modem
+pynmea2>=1.18.0        # NMEA-0183 GPS sentence parser
+mpu9250-jmdev>=1.0.4   # MPU-9250 / MPU-6500 IMU driver

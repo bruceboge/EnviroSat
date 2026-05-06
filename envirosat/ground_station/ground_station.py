@@ -42,6 +42,14 @@ logging.basicConfig(
 )
 log = logging.getLogger("ground_station")
 
+# Import the HaLow receiver
+try:
+    from halow_rx import HALowReceiver
+    HALOW_AVAILABLE = True
+except ImportError:
+    log.warning("halow_rx.py not found — HaLow reception disabled.")
+    HALOW_AVAILABLE = False
+
 # ── NRF24L01 configuration — must match satellite ────────────────────
 CE_PIN    = 24
 CSN_PIN   = 8
@@ -63,6 +71,10 @@ COMMANDS = {
 }
 
 shutdown_event = threading.Event()
+
+# ── Shared state (NRF + HaLow threads both update this) ───────────────
+_state_lock    = threading.Lock()
+display_lock   = threading.Lock()   # Prevents garbled terminal output
 
 
 # ── NRF24 receiver ────────────────────────────────────────────────────
@@ -145,46 +157,48 @@ ANSI_RESET  = "\033[0m"
 ANSI_BOLD   = "\033[1m"
 
 
-def display(record: dict, packet_count: int):
+def display(record: dict, packet_count: int, halow_count: int = 0):
     """Render a full-screen terminal dashboard."""
     ts_local = datetime.now().strftime("%H:%M:%S")
     gps_ok   = "✓ FIX" if record.get("gps_fix") else "✗ NO FIX"
     batt     = record.get("battery_v")
     batt_str = f"{batt:.2f}V" if batt else "—"
 
-    print(ANSI_CLEAR, end="")
-    print(f"{ANSI_BOLD}{ANSI_CYAN}╔══════════════════════════════════════════════╗{ANSI_RESET}")
-    print(f"{ANSI_BOLD}{ANSI_CYAN}║  EnviroSat Ground Station   {ts_local}       ║{ANSI_RESET}")
-    print(f"{ANSI_BOLD}{ANSI_CYAN}╚══════════════════════════════════════════════╝{ANSI_RESET}")
-    print()
-    print(f"  Satellite ID : {ANSI_BOLD}{record.get('satellite_id', '—')}{ANSI_RESET}    "
-          f"Packets received : {ANSI_GREEN}{packet_count}{ANSI_RESET}")
-    print(f"  Timestamp    : {record.get('timestamp', '—')}")
-    print(f"  Battery      : {ANSI_YELLOW}{batt_str}{ANSI_RESET}    "
-          f"GPS : {ANSI_GREEN if record.get('gps_fix') else ANSI_RED}{gps_ok}{ANSI_RESET}")
-    print()
-    print(f"  {ANSI_BOLD}── ENVIRONMENT ─────────────────────────────────{ANSI_RESET}")
-    print(f"  Temperature  : {record.get('temperature_c', '—')} °C")
-    print(f"  Pressure     : {record.get('pressure_hpa', '—')} hPa")
-    print(f"  Humidity     : {record.get('humidity_pct', '—')} %")
-    print(f"  Light        : {record.get('lux', '—')} lux")
-    print(f"  PM2.5        : {record.get('pm2_5', '—')} µg/m³    "
-          f"PM10 : {record.get('pm10', '—')} µg/m³")
-    print()
-    print(f"  {ANSI_BOLD}── POSITION ─────────────────────────────────────{ANSI_RESET}")
-    lat = record.get("lat");  lon = record.get("lon")
-    print(f"  Lat / Lon    : {lat if lat else '—'} / {lon if lon else '—'}")
-    print(f"  Altitude     : {record.get('altitude_m', '—')} m")
-    print()
-    print(f"  {ANSI_BOLD}── ATTITUDE ─────────────────────────────────────{ANSI_RESET}")
-    print(f"  Heading      : {record.get('heading_deg', '—')} °")
-    print(f"  Accel X/Y/Z  : {record.get('accel_x', '—')} / {record.get('accel_y', '—')} / {record.get('accel_z', '—')}")
-    print()
-    print(f"  {ANSI_BOLD}── COMMANDS ─────────────────────────────────────{ANSI_RESET}")
-    for key, (code, label) in COMMANDS.items():
-        print(f"  [{key}] {label}")
-    print(f"  [q] Quit")
-    print()
+    with display_lock:
+        print(ANSI_CLEAR, end="")
+        print(f"{ANSI_BOLD}{ANSI_CYAN}╔══════════════════════════════════════════════╗{ANSI_RESET}")
+        print(f"{ANSI_BOLD}{ANSI_CYAN}║  EnviroSat Ground Station   {ts_local}       ║{ANSI_RESET}")
+        print(f"{ANSI_BOLD}{ANSI_CYAN}╚══════════════════════════════════════════════╝{ANSI_RESET}")
+        print()
+        print(f"  Satellite ID : {ANSI_BOLD}{record.get('satellite_id', '—')}{ANSI_RESET}")
+        print(f"  NRF packets  : {ANSI_GREEN}{packet_count}{ANSI_RESET}   "
+              f"HaLow packets : {ANSI_GREEN}{halow_count}{ANSI_RESET}")
+        print(f"  Timestamp    : {record.get('timestamp', '—')}")
+        print(f"  Battery      : {ANSI_YELLOW}{batt_str}{ANSI_RESET}    "
+              f"GPS : {ANSI_GREEN if record.get('gps_fix') else ANSI_RED}{gps_ok}{ANSI_RESET}")
+        print()
+        print(f"  {ANSI_BOLD}── ENVIRONMENT ─────────────────────────────────{ANSI_RESET}")
+        print(f"  Temperature  : {record.get('temperature_c', '—')} °C")
+        print(f"  Pressure     : {record.get('pressure_hpa', '—')} hPa")
+        print(f"  Humidity     : {record.get('humidity_pct', '—')} %")
+        print(f"  Light        : {record.get('lux', '—')} lux")
+        print(f"  PM2.5        : {record.get('pm2_5', '—')} µg/m³    "
+              f"PM10 : {record.get('pm10', '—')} µg/m³")
+        print()
+        print(f"  {ANSI_BOLD}── POSITION ─────────────────────────────────────{ANSI_RESET}")
+        lat = record.get("lat");  lon = record.get("lon")
+        print(f"  Lat / Lon    : {lat if lat else '—'} / {lon if lon else '—'}")
+        print(f"  Altitude     : {record.get('altitude_m', '—')} m")
+        print()
+        print(f"  {ANSI_BOLD}── ATTITUDE ─────────────────────────────────────{ANSI_RESET}")
+        print(f"  Heading      : {record.get('heading_deg', '—')} °")
+        print(f"  Accel X/Y/Z  : {record.get('accel_x', '—')} / {record.get('accel_y', '—')} / {record.get('accel_z', '—')}")
+        print()
+        print(f"  {ANSI_BOLD}── COMMANDS ─────────────────────────────────────{ANSI_RESET}")
+        for key, (code, label) in COMMANDS.items():
+            print(f"  [{key}] {label}")
+        print(f"  [q] Quit")
+        print()
 
 
 # ── Command input thread ──────────────────────────────────────────────
@@ -211,47 +225,80 @@ def command_loop(receiver: NRFReceiver, shutdown_event: threading.Event):
 # ── Main ──────────────────────────────────────────────────────────────
 
 def main():
-    log.info("EnviroSat Ground Station starting.")
+    log.info("EnviroSat Ground Station starting (NRF24 + HaLow dual receiver).")
     receiver = NRFReceiver()
     csv_log  = CSVLogger(OUTPUT_DIR)
 
+    # ── Shared display state ─────────────────────────────────────────
+    packet_count      = [0]     # NRF packet counter (list for mutability in closure)
+    halow_count       = [0]     # HaLow packet counter
+    last_record       = [{}]    # Shared last record (updated by both receivers)
+
+    def on_halow_record(record, count, source="HaLow"):
+        """Callback invoked by the HaLow receiver thread for each record."""
+        with _state_lock:
+            last_record[0] = record
+            halow_count[0] = count
+        csv_log.write(record)
+        display(record, packet_count[0], halow_count[0])
+
+    # ── Start HaLow receive thread ─────────────────────────────────────
+    halow_receiver = None
+    if HALOW_AVAILABLE:
+        halow_receiver = HALowReceiver(
+            csv_logger=None,          # csv_log.write() called in on_halow_record
+            callback=on_halow_record,
+        )
+        halow_thread = threading.Thread(
+            target=halow_receiver.run,
+            args=(shutdown_event,),
+            daemon=True,
+        )
+        halow_thread.start()
+        log.info("HaLow receive thread started.")
+    else:
+        log.info("HaLow receive thread NOT started (halow_rx not available).")
+
+    # ── Start NRF command input thread ───────────────────────────────
     cmd_thread = threading.Thread(
         target=command_loop, args=(receiver, shutdown_event), daemon=True
     )
     cmd_thread.start()
 
-    packet_count = 0
-    last_record  = {}
-
     log.info("Listening for packets … (press q + Enter to quit)")
 
+    # ── NRF receive loop (main thread) ───────────────────────────────
     while not shutdown_event.is_set():
         if receiver.available():
             raw = receiver.read()
             try:
                 text   = raw.decode("utf-8").rstrip("\x00")
                 record = json.loads(text)
-                packet_count += 1
+                packet_count[0] += 1
 
                 # Normalise compact field names back to full names
                 if "id"  in record: record["satellite_id"] = record.pop("id")
                 if "ts"  in record:
                     ts_raw = record.pop("ts")
-                    # ts_raw is HHMMSS — reconstruct with today's date
                     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                     record.setdefault("timestamp", f"{today}T{ts_raw[:2]}:{ts_raw[2:4]}:{ts_raw[4:6]}Z")
 
-                last_record = record
+                record["link"] = "nrf"
+                with _state_lock:
+                    last_record[0] = record
+
                 csv_log.write(record)
-                display(record, packet_count)
+                display(record, packet_count[0], halow_count[0])
 
             except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-                log.warning(f"Bad packet: {exc}  raw={raw!r}")
+                log.warning(f"Bad NRF packet: {exc}  raw={raw!r}")
         else:
-            time.sleep(0.05)    # 50 ms poll to keep CPU low
+            time.sleep(0.05)    # 50 ms poll
 
     csv_log.close()
-    log.info(f"Ground station stopped. {packet_count} packets received.")
+    if halow_receiver:
+        halow_receiver.close()
+    log.info(f"Ground station stopped. NRF={packet_count[0]} HaLow={halow_count[0]} packets.")
 
 
 if __name__ == "__main__":
