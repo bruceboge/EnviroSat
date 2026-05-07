@@ -39,6 +39,8 @@
 | 1 | Arducam UC-444 dual camera adapter | CSI ribbon cable |
 | 2 | Camera modules (OV5647 or IMX219) | Must be the same model |
 | 1 | Morse Micro HaLow USB modem | USB-A to Pi |
+| 1 | Mini PCIe to USB adapter + 4G/LTE modem | SIM card slot on adapter; modem plugs into Pi USB-A |
+| 1 | Nano SIM card (Safaricom / Airtel / Telkom) | Data-enabled SIM |
 | 1 | 18650 Li-ion battery (×2) | For UPS HAT |
 | 1 | MicroSD card (32 GB+, Class 10) | Data logging storage |
 
@@ -107,6 +109,29 @@ Run `sudo i2cdetect -y 1` after installation. Expected addresses:
 | `0x68` | MPU-9250/6500 IMU |
 | `0x70` | Arducam UC-444 camera mux |
 | `0x76` | BME280 (temperature/pressure/humidity) |
+
+### 2.5 USB Port Allocation
+
+> [!WARNING]
+> Both the HaLow modem and the cellular modem appear as `/dev/ttyUSBx` devices.
+> Plug them into the Pi in this order **every time** to ensure consistent port assignment:
+> 1. HaLow modem first → gets `/dev/ttyUSB0`
+> 2. Cellular modem second → gets `/dev/ttyUSB1`, `/dev/ttyUSB2`, `/dev/ttyUSB3`
+>
+> ModemManager identifies the cellular modem by its USB Vendor ID / Product ID,
+> so it will always find the right device regardless of port number.
+> The HaLow port is hardcoded to `/dev/ttyUSB0` in `config.py` — change this only
+> if your HaLow modem consistently appears on a different port.
+
+```bash
+# Verify port assignment after plugging both devices in:
+ls -la /dev/ttyUSB*
+# Expected:
+#   /dev/ttyUSB0   ← HaLow modem
+#   /dev/ttyUSB1   ← cellular modem AT command port
+#   /dev/ttyUSB2   ← cellular modem diagnostics
+#   /dev/ttyUSB3   ← cellular modem data port
+```
 
 ---
 
@@ -483,6 +508,23 @@ cd ~/envirosat && git pull
 ### Logs filling the microSD
 - Log rotation is configured: `system.log` rotates at 10 MB, keeping 5 files
 - JSONL data files grow at ~1 record/minute (~5 KB/hour) — a 32 GB card will last decades
+
+### Cellular modem not detected (`mmcli -L` returns empty)
+- Confirm the modem is powered (mini PCIe adapter must have adequate power from USB)
+- Try `lsusb` to see if the adapter is enumerated at all
+- Try `sudo systemctl restart ModemManager` and wait 30 seconds
+- Some modems need a PIN-unlock first: `sudo mmcli -m 0 --pin=1234`
+- Check `dmesg | grep -i usb` for enumeration errors
+
+### Connected but no internet (`ping 8.8.8.8` fails)
+- Verify the APN: `sudo mmcli -m 0` and check the bearer section
+- Try manually: `sudo nmcli connection up envirosat-lte`
+- Check routing: `ip route` — ensure there is a default route via `wwan0` or `usb0`
+- Some carriers require the correct APN exactly: Safaricom → `safaricom`, Airtel → `airtelgprs.com`
+
+### Wrong interface name (`wwan0` not found)
+- Run `ip link` to see the actual interface name (may be `usb0`, `wwan0`, `eth1`)
+- Update `CELLULAR_IFACE` in `config.py` to match
 
 ---
 

@@ -6,6 +6,7 @@
 
 - 🌡️ **Environmental sensing** — Temperature, pressure, humidity, light, CO/NO2/NH3 gas, PM1/PM2.5/PM10 particulates
 - 📡 **Dual radio telemetry** — NRF24L01+ (compact, 100m) + Morse Micro HaLow (full record, 1 km+)
+- 📶 **4G/LTE mobile internet** — Mini PCIe-to-USB cellular modem with SIM card; ModemManager + NetworkManager auto-connect; signal/carrier/IP logged every cycle
 - 📍 **GPS positioning** — u-blox Neo-6M NMEA reader with background thread
 - 🔄 **Attitude sensing** — MPU-9250 3-axis accel/gyro/magnetometer
 - 📷 **Dual camera** — Arducam UC-444 with automatic 5-minute captures
@@ -75,6 +76,7 @@ EnviroSat/
 | u-blox Neo-6M | GPS positioning |
 | NRF24L01+ (+ adapter) | Short-range 2.4 GHz telemetry |
 | Morse Micro HaLow modem | Long-range 900 MHz WiFi telemetry |
+| Mini PCIe-to-USB adapter + 4G modem | Mobile internet via SIM card |
 | MPU-9250 IMU | Attitude (accel/gyro/mag) |
 | Arducam UC-444 | Dual camera multiplexer |
 

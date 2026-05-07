@@ -59,7 +59,7 @@ sudo apt update -y && sudo apt upgrade -y
 success "System packages up to date."
 
 # ── 2. System-level packages ──────────────────────────────────────────
-info "Step 2/8 — Installing system packages …"
+info "Step 2/9 — Installing system packages …"
 sudo apt install -y \
     python3-pip \
     python3-serial \
@@ -68,7 +68,11 @@ sudo apt install -y \
     i2c-tools \
     build-essential \
     dkms \
-    linux-headers-$(uname -r)
+    linux-headers-$(uname -r) \
+    modemmanager \
+    network-manager \
+    libmbim-utils \
+    libqmi-utils
 success "System packages installed."
 
 # ── 3. Pimoroni Enviro+ library ───────────────────────────────────────

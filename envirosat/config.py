@@ -72,3 +72,25 @@ DASHBOARD_PORT    = 8080
 # ── System Logging (satellite) ────────────────────────────────────────
 LOG_MAX_BYTES    = 10 * 1024 * 1024   # 10 MB per rotating log file
 LOG_BACKUP_COUNT = 5                  # Keep 5 backup files
+
+# ── Mobile Data (4G/LTE via mini PCIe-to-USB adapter + SIM) ──────────
+# The mini PCIe adapter exposes the modem as one or more /dev/ttyUSBx
+# ports. ModemManager detects and manages it automatically.
+#
+# ⚠ Port conflict note: HaLow uses /dev/ttyUSB0.
+#   The cellular modem typically appears on /dev/ttyUSB1–ttyUSB3.
+#   Run `ls /dev/ttyUSB*` with both devices plugged in to confirm.
+#
+# Common Kenyan carrier APNs:
+#   Safaricom  →  "safaricom"      or  "internet"
+#   Airtel KE  →  "airtelgprs.com"
+#   Telkom KE  →  "internet"
+#
+# After first boot run: sudo mmcli -L   to find your modem index.
+CELLULAR_ENABLED        = True
+CELLULAR_APN            = "safaricom"       # Your carrier's APN
+CELLULAR_MODEM_INDEX    = 0                 # mmcli modem index (usually 0)
+CELLULAR_IFACE          = "wwan0"           # Network interface (check: ip link)
+CELLULAR_CONN_NAME      = "envirosat-lte"   # NetworkManager connection profile name
+CELLULAR_CHECK_INTERVAL = 60               # Seconds between connectivity health checks
+CELLULAR_PING_HOST      = "8.8.8.8"        # Host pinged to verify internet is live

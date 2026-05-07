@@ -28,6 +28,7 @@ from scripts.camera        import CameraController
 from scripts.nrf_tx        import NRFTransmitter
 from scripts.halow_tx      import HALowTransmitter
 from scripts.power_monitor import PowerMonitor
+from scripts.mobile_data   import MobileDataMonitor
 from scripts.logger        import DataLogger
 from config import (
     SATELLITE_ID, COLLECTION_INTERVAL, CAMERA_INTERVAL,
@@ -77,9 +78,10 @@ def signal_handler(sig, frame):
     shutdown_event.set()
 
 
-def build_data_record(sensors, gps, imu, battery_v, uptime_s):
+def build_data_record(sensors, gps, imu, battery_v, uptime_s, mobile=None):
     """Assemble one complete timestamped JSON-serialisable record."""
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    cell = mobile or {}
     return {
         "satellite_id":  SATELLITE_ID,
         "timestamp":     ts,
@@ -112,7 +114,13 @@ def build_data_record(sensors, gps, imu, battery_v, uptime_s):
         "heading_deg":   imu.get("heading"),
         # Power
         "battery_v":     round(battery_v, 3) if battery_v else None,
-        # Status flags (bitfield: b0=sensor_err, b1=gps_no_fix, b2=low_batt)
+        # Cellular
+        "cell_connected": cell.get("connected"),
+        "cell_carrier":   cell.get("carrier"),
+        "cell_signal_pct": cell.get("signal_pct"),
+        "cell_tech":      cell.get("access_tech"),
+        "cell_ip":        cell.get("ip_address"),
+        # Status flags (bitfield: b0=sensor_err, b1=gps_no_fix, b2=low_batt, b3=no_cell)
         "flags":         0x00,
     }
 
@@ -173,6 +181,11 @@ def main():
     power_thread = threading.Thread(target=power.run, daemon=True)
     power_thread.start()
 
+    log.info("Initialising mobile data monitor …")
+    mobile = MobileDataMonitor()
+    mobile_thread = threading.Thread(target=mobile.run, args=(shutdown_event,), daemon=True)
+    mobile_thread.start()
+
     log.info("Initialising data logger …")
     logger = DataLogger(LOG_DIR)
 
@@ -204,9 +217,21 @@ def main():
         # 4. Get battery voltage
         battery_v = power.battery_voltage()
 
-        # 5. Build complete record
+        # 5. Get cellular status
+        mobile_data = mobile.status()
+        if mobile_data.get("connected"):
+            log.debug(
+                f"Cellular: {mobile_data.get('carrier','?')} "
+                f"{mobile_data.get('access_tech','?')} "
+                f"{mobile_data.get('signal_pct','?')}% "
+                f"IP={mobile_data.get('ip_address')}"
+            )
+
+        # 6. Build complete record
         uptime = time.monotonic() - start_time
-        record = build_data_record(sensor_data, gps_data, imu_data, battery_v, uptime)
+        record = build_data_record(
+            sensor_data, gps_data, imu_data, battery_v, uptime, mobile_data
+        )
 
         # 6. Log to microSD
         try:
